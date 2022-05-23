@@ -10,11 +10,20 @@ int status = WL_IDLE_STATUS;     // the WiFi radio's status
 
 // API Credentialss
 char server[] = "21593698.pythonanywhere.com";
-String API_KEY = "b'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6MiwiZW1haWwiOiIyMTU5MzY5OEBzdW4uYWMuemEifQ.ohTyMQ8Wky5OZMNOkUpF9fE33FLQeO4y7kvqnghEc90'";
+uint8_t API_KEY[] = "b'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6MiwiZW1haWwiOiIyMTU5MzY5OEBzdW4uYWMuemEifQ.ohTyMQ8Wky5OZMNOkUpF9fE33FLQeO4y7kvqnghEc90'";
+
+class APIStateTemplate{
+  public:
+    uint8_t unix; 
+    StaticJsonDocument<JSON_OBJECT_SIZE(3)> usage_doc;
+    StaticJsonDocument<JSON_OBJECT_SIZE(3)> peak_doc;
+};
 
 WiFiClient client;
 
 void setup() {
+
+  APIStateTemplate APIState;
   
   Serial.begin(9600);
   
@@ -47,25 +56,21 @@ void setup() {
   Serial.print("Connected to: ");
   Serial.println(ssid);
 
-  // Create JSON objects for posting to server
-  const int usage_capacity = JSON_OBJECT_SIZE(3);
-  const int peak_capacity = JSON_OBJECT_SIZE(3);
-  StaticJsonDocument<usage_capacity> usage_doc;
-  StaticJsonDocument<peak_capacity> peak_doc;
-  usage_doc["datetime"] = "2022-04-08 11:05";
-  usage_doc["usage"] = 1000;
-  usage_doc["api_key"] = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6MiwiZW1haWwiOiJkZm1vbGxlckBnbWFpbC5jb20ifQ.xndFJxOtsZ4Alsj5r-I59cfxetvWCM3DhfBv2fHmRE4";
-  peak_doc["datetime"] = "2022-04-08 11:05";
-  peak_doc["peak"] = 500;
-  peak_doc["api_key"] = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6MiwiZW1haWwiOiJkZm1vbGxlckBnbWFpbC5jb20ifQ.xndFJxOtsZ4Alsj5r-I59cfxetvWCM3DhfBv2fHmRE4";
+  // Build JSON objects
+  APIState.usage_doc["datetime"] = "2022-04-08 11:05";
+  APIState.usage_doc["usage"] = 1000;
+  APIState.usage_doc["api_key"] = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6MiwiZW1haWwiOiJkZm1vbGxlckBnbWFpbC5jb20ifQ.xndFJxOtsZ4Alsj5r-I59cfxetvWCM3DhfBv2fHmRE4";
+  APIState.peak_doc["datetime"] = "2022-04-08 11:05";
+  APIState.peak_doc["peak"] = 500;
+  APIState.peak_doc["api_key"] = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6MiwiZW1haWwiOiJkZm1vbGxlckBnbWFpbC5jb20ifQ.xndFJxOtsZ4Alsj5r-I59cfxetvWCM3DhfBv2fHmRE4";
   Serial.println("JSON Objects to be sent via POST request:");
-  serializeJsonPretty(usage_doc, Serial);
-  serializeJsonPretty(peak_doc, Serial);
+  serializeJsonPretty(APIState.usage_doc, Serial);
+  serializeJsonPretty(APIState.peak_doc, Serial);
   Serial.println();
 
   // Send Data
-  postData(client, "/postUsage", usage_doc);
-  postData(client, "/postPeak", peak_doc);
+  postData(client, "/postUsage", APIState.usage_doc);
+  postData(client, "/postPeak", APIState.peak_doc);
 
 }
 
