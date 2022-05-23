@@ -1,0 +1,2 @@
+#define SECRET_SSID "WR7010-2.4G-209"
+#define SECRET_PASS "yydw68766"
