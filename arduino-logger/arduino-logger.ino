@@ -12,37 +12,43 @@ int status = WL_IDLE_STATUS;     // the WiFi radio's status
 // API Credentialss
 char server[] = "21593698.pythonanywhere.com";
 char dt_server[] = "worldtimeapi.org";
-//uint8_t API_KEY[] = "b'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6MiwiZW1haWwiOiIyMTU5MzY5OEBzdW4uYWMuemEifQ.ohTyMQ8Wky5OZMNOkUpF9fE33FLQeO4y7kvqnghEc90'";
 
 class APIStateTemplate{
   public:
     String datetime;
-    int usage;
-    int peak;
+    uint16_t usage = 1000;
+    uint16_t peak = 500;
+    uint32_t last_post_time = 0;
+    uint16_t posting_interval = 10*60; // Every 10 minutes
+    uint32_t seconds_passed = 0;
 };
 
 WiFiClient client;
 APIStateTemplate APIState;
 
 void setup() {
-
-  APIState.usage = 1000;
-  APIState.peak = 500;
-  
   Serial.begin(9600);
   while (!Serial);
   setupWiFi();
-  getDateTime();
-  postData();
-
+  updateSystemDateTime(); // Requires a Connection
+  postData(); // First Post
 }
 
 void loop() {
-  delay(10000);
-  Serial.println("Main Loop");
+  delay(1);
+  APIState.seconds_passed = now() - APIState.last_post_time;
+  if(APIState.seconds_passed > APIState.posting_interval)
+  {
+    postData();
+    APIState.last_post_time = now();
+  }
+  APIState.usage++;
+  APIState.peak++;
+  if(APIState.usage > 5000) APIState.usage = 0;
+  if(APIState.peak > 5000) APIState.peak = 0;
 }
 
-uint8_t timeToString()
+String getCurrentDateTimeString()
 {
   uint16_t year_temp = year();
   uint8_t month_temp = month();
@@ -65,30 +71,34 @@ uint8_t timeToString()
   buf[15] = (minute_temp % 10) + 48;
   buf[17] = ((second_temp/10) % 10) + 48;
   buf[18] = (second_temp % 10) + 48;
-  APIState.datetime = (char*)buf;
-  Serial.print("(char*)buf: ");
-  Serial.println((char*)buf);
+  return (char*)buf;
 }
 
 void postData()
 {
-  timeToString();
-  StaticJsonDocument<JSON_OBJECT_SIZE(3)> usage_doc;
-  StaticJsonDocument<JSON_OBJECT_SIZE(3)> peak_doc;
+  Serial.println("");
+  Serial.println("##### Posting Data to Flask ######################");
+  Serial.println("On " + getCurrentDateTimeString());
+  APIState.datetime = getCurrentDateTimeString();
+  StaticJsonDocument<256> usage_doc;
+  StaticJsonDocument<256> peak_doc;
   usage_doc["datetime"] = APIState.datetime;
-  usage_doc["api_key"] = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6MiwiZW1haWwiOiJkZm1vbGxlckBnbWFpbC5jb20ifQ.xndFJxOtsZ4Alsj5r-I59cfxetvWCM3DhfBv2fHmRE4";
+  usage_doc["api_key"] = API_KEY;
   usage_doc["usage"] = APIState.usage;
   peak_doc["datetime"] = APIState.datetime;
-  peak_doc["api_key"] = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6MiwiZW1haWwiOiJkZm1vbGxlckBnbWFpbC5jb20ifQ.xndFJxOtsZ4Alsj5r-I59cfxetvWCM3DhfBv2fHmRE4";
-  peak_doc["usage"] = APIState.peak;
-  Serial.println("JSON Objects to be sent via POST request:");
-  serializeJsonPretty(usage_doc, Serial);
-  serializeJsonPretty(peak_doc, Serial);
-  Serial.println();
+  peak_doc["api_key"] = API_KEY;
+  peak_doc["peak"] = APIState.peak;
+//  Serial.println("JSON Objects to be sent via POST request:");
+//  serializeJsonPretty(usage_doc, Serial);
+//  Serial.println();
+//  serializeJsonPretty(peak_doc, Serial);
+//  Serial.println();
   postToEndpoint(client, "/postUsage", usage_doc);
   postToEndpoint(client, "/postPeak", peak_doc);
   usage_doc.clear();
   peak_doc.clear();
+  Serial.println("##################################################");
+  Serial.println("");
 }
 
 void postToEndpoint(WiFiClient client, String endpoint, const JsonDocument& doc)
@@ -105,10 +115,8 @@ void postToEndpoint(WiFiClient client, String endpoint, const JsonDocument& doc)
     client.println(); //Terminate headers with a blank line
     serializeJson(doc, client); // Send JSON document in body
   } else{
-    Serial.println("Client not connecting...");
+    Serial.println("Unable to connect to PythonAnywhere Flask server!");
   }
-
-  Serial.println();
   Serial.println("Response from Server:");
   String line = "";
   while (client.connected()) { 
@@ -119,6 +127,8 @@ void postToEndpoint(WiFiClient client, String endpoint, const JsonDocument& doc)
 
 void setupWiFi()
 {
+  Serial.println("");
+  Serial.println("##### WiFi Setup #################################");
   if (WiFi.status() == WL_NO_MODULE) {
     Serial.println("Communication with WiFi module failed!");
     // don't continue
@@ -126,26 +136,27 @@ void setupWiFi()
   }
   String fv = WiFi.firmwareVersion();
   if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
-    Serial.println("Please upgrade the firmware");
+    Serial.println("Please upgrade the firmware!");
   }
   while (status != WL_CONNECTED) {
     Serial.print("Attempting to connect to WPA SSID: ");
     Serial.println(ssid);
-    // Connect to WPA/WPA2 network:
-    status = WiFi.begin(ssid, pass);
-
-    // wait 5 seconds for connection:
+    status = WiFi.begin(ssid, pass); // Connect to WPA/WPA2 network:
     delay(5000);
   }
   Serial.print("Connected to: ");
   Serial.println(ssid);
+  Serial.println("##################################################");
+  Serial.println("");
 }
 
-void getDateTime()
+void updateSystemDateTime()
 {
-  Serial.println("\nStarting connection to server..."); 
+  Serial.println("");
+  Serial.println("##### Update Sys Time ############################");
+  Serial.println("Starting connection to worldtimeapi server..."); 
   if (client.connect(dt_server, 80)) { 
-    Serial.println("connected to server"); 
+    Serial.println("Connected to worldtimeapi server."); 
     // Make a HTTP request: 
     client.println("GET /api/timezone/Africa/Johannesburg HTTP/1.1");
     client.println("Host: worldtimeapi.org");
@@ -155,9 +166,11 @@ void getDateTime()
     while (!client.available()) {
       delay(2000);
       secondsWaited += 2;
-      Serial.println("Waiting for data...");
+      Serial.println("Waiting for data from worldtimeapi server...");
       if (secondsWaited > 20) {
         Serial.println("Time Out! Took too long to respond");
+        Serial.println("##################################################");
+        Serial.println("");
         return;
       }
     }
@@ -167,39 +180,46 @@ void getDateTime()
     if(strcmp(httpStatus + 9, "200 OK") != 0){
       Serial.print(F("Unexpected Response: "));
       Serial.println(httpStatus + 9);
+      Serial.println("##################################################");
+      Serial.println("");
       return;
     }
     //  Skip HTTP Headers
     char endOfHeaders[] = "\r\n\r\n";
     if(!client.find(endOfHeaders)){
       Serial.println(F("Invalid Response"));
+      Serial.println("##################################################");
+      Serial.println("");
       return;
     }
     //  Create filter for parsing Json
-    StaticJsonDocument<JSON_OBJECT_SIZE(1)> filter;
+    StaticJsonDocument<16> filter;
     filter["unixtime"] = true;
-    StaticJsonDocument<JSON_OBJECT_SIZE(3)> doc; // Document to store incoming json after being filtered (experimentally found that a size of at least 3 is required)
+    StaticJsonDocument<256> doc; // Document to store incoming json after being filtered (experimentally found that a size of at least 3 is required)
     DeserializationError error;
     error = deserializeJson(doc, client, DeserializationOption::Filter(filter));
     if (error) {
       Serial.print(F("deserializeJson() failed: "));
       Serial.println(error.f_str());
+      Serial.println("##################################################");
+      Serial.println("");
       return;
-    } 
-    Serial.println(" ");
+    }
     Serial.println("WorldTimeApi UnixTime Response:");
     serializeJsonPretty(doc, Serial);
-    Serial.println(" ");
+    Serial.println("");
     uint32_t unixtime = 0;
     unixtime = doc["unixtime"];
     unixtime += 120*60; // Plus two hours
     setTime(unixtime);
-    
-    //  Disconnect
-    client.stop();
-  
+    APIState.last_post_time = unixtime;
+    client.stop(); //  Disconnect
+    filter.clear();
+    doc.clear();
+    Serial.println("DT Set: " + getCurrentDateTimeString());
   } else { 
     Serial.println("Unable to connect to WorldTimeApi server");
   } 
-  Serial.println("End of getDateTime() function");
+  Serial.println("##################################################");
+  Serial.println("");
 }
