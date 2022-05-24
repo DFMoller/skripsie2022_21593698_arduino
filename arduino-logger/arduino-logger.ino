@@ -28,16 +28,17 @@ APIStateTemplate APIState;
 
 void setup() {
   Serial.begin(9600);
-  while (!Serial);
+  delay(2000);
+//  while (!Serial);
   setupWiFi();
   updateSystemDateTime(); // Requires a Connection
   postData(); // First Post
 }
 
 void loop() {
-  delay(1);
+  delay(1000);
   APIState.seconds_passed = now() - APIState.last_post_time;
-  if(APIState.seconds_passed > APIState.posting_interval)
+  if(APIState.seconds_passed >= APIState.posting_interval)
   {
     postData();
     APIState.last_post_time = now();
