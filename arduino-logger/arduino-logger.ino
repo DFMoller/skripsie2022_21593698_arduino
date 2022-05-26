@@ -3,11 +3,29 @@
 #include "secrets.h"
 #include <ArduinoJson.h>
 #include <TimeLib.h>
+#include "SAMDTimerInterrupt.h"
+#include "SAMD_ISR_Timer.h"
+
+
+
+SAMDTimer ITimer(TIMER_TC3);
+SAMD_ISR_Timer ISR_Timer;
+#define HW_TIMER_INTERVAL_MS      1
+#define TIMER_INTERVAL_5MS       5L
+
+
 
 // Wifi Credentials
 char ssid[] = SECRET_SSID;        // your network SSID (name)
 char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
 int status = WL_IDLE_STATUS;     // the WiFi radio's status
+int analogPin = A7;
+int sensorValue = 0;
+uint16_t readCount = 0;
+uint16_t readBuff[1000];
+uint32_t readSum = 0;
+bool readFlag = false;
+uint16_t readMax = 0;
 
 // API Credentialss
 char server[] = "21593698.pythonanywhere.com";
@@ -26,6 +44,16 @@ class APIStateTemplate{
 WiFiClient client;
 APIStateTemplate APIState;
 
+void TimerHandler(void)
+{
+  ISR_Timer.run();
+}
+
+void readCurrent()
+{
+  readFlag = true;
+}
+
 void setup() {
   Serial.begin(9600);
   delay(2000);
@@ -33,6 +61,18 @@ void setup() {
   setupWiFi();
   updateSystemDateTime(); // Requires a Connection
   postData(); // First Post
+
+  // Interval in millisecs
+  if (ITimer.attachInterruptInterval_MS(HW_TIMER_INTERVAL_MS, TimerHandler))
+  {
+    Serial.print(F("Starting ITimer OK, millis() = ")); Serial.println(millis());
+  }
+  else
+  {
+    Serial.println(F("Can't set ITimer. Select another freq. or timer"));
+  }
+  
+  ISR_Timer.setInterval(TIMER_INTERVAL_5MS,  readCurrent);
 }
 
 void loop() {
@@ -47,6 +87,27 @@ void loop() {
   APIState.peak++;
   if(APIState.usage > 5000) APIState.usage = 0;
   if(APIState.peak > 5000) APIState.peak = 0;
+
+  if(readFlag)
+  {
+    if(readCount >= 1000)
+    {
+      Serial.println("Max Voltage: " + readMax);
+      readCount = 0;
+    }
+    else
+    {
+      sensorValue = analogRead(analogPin);
+      readBuff[readCount] = sensorValue;
+      readSum += sensorValue;
+      if(sensorValue > readMax)
+      {
+        readMax = sensorValue;
+      }
+      readCount ++;
+    }
+    readFlag = false;
+  }
 }
 
 String getCurrentDateTimeString()
