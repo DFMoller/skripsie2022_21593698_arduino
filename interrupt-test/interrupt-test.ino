@@ -47,13 +47,6 @@
 //  #define LED_BUILTIN       13
 //#endif
 
-#ifndef LED_BLUE
-  #define LED_BLUE          2
-#endif
-
-#ifndef LED_RED
-  #define LED_RED           8
-#endif
    
 #include "SAMDTimerInterrupt.h"
 #include "SAMD_ISR_Timer.h"
@@ -83,8 +76,8 @@ SAMD_ISR_Timer ISR_Timer;
 #define TIMER_INTERVAL_2S             2000L
 #define TIMER_INTERVAL_5S             5000L
 
-int analogPin = A7;
-uint16_t ADC_Val = 0;
+int analogPin = A6;
+int ADC_Val = 0;
 
 void TimerHandler(void)
 {
@@ -98,7 +91,8 @@ void doingSomething1()
 {
   digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
   ADC_Val = int(analogRead(analogPin));
-  Serial.println("ADC Pin A7 Value: " + ADC_Val);
+  Serial.print("ADC Pin A7 Value: ");
+  Serial.println(ADC_Val);
 }
 
 void setup()
@@ -117,8 +111,9 @@ void setup()
 
   // configure pin in output mode
   pinMode(LED_BUILTIN,  OUTPUT);
-  pinMode(LED_BLUE,     OUTPUT);
-  pinMode(LED_RED,      OUTPUT);
+  pinMode(5,            OUTPUT);
+
+  digitalWrite(5, HIGH);
 
   // Interval in millisecs
   if (ITimer.attachInterruptInterval_MS(HW_TIMER_INTERVAL_MS, TimerHandler))

@@ -11,7 +11,7 @@
 SAMDTimer ITimer(TIMER_TC3);
 SAMD_ISR_Timer ISR_Timer;
 #define HW_TIMER_INTERVAL_MS      1
-#define TIMER_INTERVAL_5MS       5L
+#define TIMER_INTERVAL_1MS       1L
 
 
 
@@ -19,13 +19,20 @@ SAMD_ISR_Timer ISR_Timer;
 char ssid[] = SECRET_SSID;        // your network SSID (name)
 char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
 int status = WL_IDLE_STATUS;     // the WiFi radio's status
-int analogPin = A7;
+int analogPin = A2;
 int sensorValue = 0;
 uint16_t readCount = 0;
-uint16_t readBuff[1000];
+uint16_t buffA[200];
+uint16_t buffB[5];
+uint16_t buffC[1800];
+uint8_t lenA = 0;
+uint8_t lenB = 0;
+uint16_t lenC = 0;
 uint32_t readSum = 0;
-bool readFlag = false;
+bool postDataFlag = false;
 uint16_t readMax = 0;
+uint32_t PrmsTotal = 0;
+uint16_t PrmsAverage = 0;
 
 // API Credentialss
 char server[] = "21593698.pythonanywhere.com";
@@ -51,7 +58,37 @@ void TimerHandler(void)
 
 void readCurrent()
 {
-  readFlag = true;
+  if(lenA >= 200)
+  {
+    // Calculate Prms for the last 200ms and store in buffB
+    buffB[lenB] = readMax;
+    PrmsTotal += readMax;
+    lenB ++;
+    readMax = 0;
+    lenA = 0;
+  }
+  else if(lenB >= 5)
+  {
+    // Calculate average Prms from buffB for the last second and store in buffC
+    PrmsAverage = PrmsTotal / 5;
+    Serial.print("PrmsAverage: ");
+    Serial.print(PrmsAverage);
+    Serial.print("    lenC: ");
+    Serial.println(lenC);
+    buffC[lenC] = PrmsAverage;
+    PrmsTotal = 0;
+    lenC ++;
+    lenB = 0;
+  }
+  else if(lenC >= 1800)
+  {
+    // Calculate Usage and Peak every 30 min. Print to Serial and to Server
+    postDataFlag = true;
+    lenC = 0;
+  }
+  sensorValue = analogRead(analogPin);
+  if(sensorValue > readMax) readMax = sensorValue;
+  lenA ++;
 }
 
 void setup() {
@@ -60,7 +97,10 @@ void setup() {
 //  while (!Serial);
   setupWiFi();
   updateSystemDateTime(); // Requires a Connection
-  postData(); // First Post
+//  postData(); // First Post
+
+  pinMode(7, OUTPUT);
+  digitalWrite(7, HIGH);
 
   // Interval in millisecs
   if (ITimer.attachInterruptInterval_MS(HW_TIMER_INTERVAL_MS, TimerHandler))
@@ -72,41 +112,23 @@ void setup() {
     Serial.println(F("Can't set ITimer. Select another freq. or timer"));
   }
   
-  ISR_Timer.setInterval(TIMER_INTERVAL_5MS,  readCurrent);
+  ISR_Timer.setInterval(TIMER_INTERVAL_1MS,  readCurrent);
 }
 
 void loop() {
-  delay(1000);
-  APIState.seconds_passed = now() - APIState.last_post_time;
-  if(APIState.seconds_passed >= APIState.posting_interval)
-  {
-    postData();
-    APIState.last_post_time = now();
-  }
-  APIState.usage++;
-  APIState.peak++;
-  if(APIState.usage > 5000) APIState.usage = 0;
-  if(APIState.peak > 5000) APIState.peak = 0;
 
-  if(readFlag)
+//  APIState.seconds_passed = now() - APIState.last_post_time;
+//  if(APIState.seconds_passed >= APIState.posting_interval)
+//  {
+//    postData();
+//    APIState.last_post_time = now();
+//  }
+
+  if(postDataFlag)
   {
-    if(readCount >= 1000)
-    {
-      Serial.println("Max Voltage: " + readMax);
-      readCount = 0;
-    }
-    else
-    {
-      sensorValue = analogRead(analogPin);
-      readBuff[readCount] = sensorValue;
-      readSum += sensorValue;
-      if(sensorValue > readMax)
-      {
-        readMax = sensorValue;
-      }
-      readCount ++;
-    }
-    readFlag = false;
+    // Calculate Usage and Peak every 30 min. Print to Serial and to Server.
+    Serial.println("postDataFlag!");
+    postDataFlag = false;
   }
 }
 
