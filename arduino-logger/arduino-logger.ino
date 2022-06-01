@@ -5,6 +5,7 @@
 #include <TimeLib.h>
 #include "SAMDTimerInterrupt.h"
 #include "SAMD_ISR_Timer.h"
+#include <SD.h>
 
 
 
@@ -12,27 +13,32 @@ SAMDTimer ITimer(TIMER_TC3);
 SAMD_ISR_Timer ISR_Timer;
 #define HW_TIMER_INTERVAL_MS      1
 #define TIMER_INTERVAL_1MS       1L
-
-
+const int chipSelect = 10;
+File dataFile;
 
 // Wifi Credentials
 char ssid[] = SECRET_SSID;        // your network SSID (name)
 char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
 int status = WL_IDLE_STATUS;     // the WiFi radio's status
-int analogPin = A2;
-int sensorValue = 0;
+int analogPin = A7;
+uint16_t sensorValue = 0;
 uint16_t readCount = 0;
 uint16_t buffA[200];
 uint16_t buffB[5];
-uint16_t buffC[1800];
+uint16_t buffC[2000];
 uint8_t lenA = 0;
 uint8_t lenB = 0;
 uint16_t lenC = 0;
 uint32_t readSum = 0;
 bool postDataFlag = false;
 uint16_t readMax = 0;
+uint16_t Prms = 0;
 uint32_t PrmsTotal = 0;
 uint16_t PrmsAverage = 0;
+uint8_t lastLoopMin = 0;
+uint8_t thisLoopMin = 0;
+int millivolts = 0;
+String SDString = "";
 
 // API Credentialss
 char server[] = "21593698.pythonanywhere.com";
@@ -61,30 +67,30 @@ void readCurrent()
   if(lenA >= 200)
   {
     // Calculate Prms for the last 200ms and store in buffB
-    buffB[lenB] = readMax;
-    PrmsTotal += readMax;
+    millivolts = readMax*(3300/1023.0) - 1660 - 100;
+    if(millivolts < 0) millivolts = 0;
+    Prms = (millivolts/33.0) * 2/sqrt(2) * 230; // Prms
+    PrmsTotal += Prms;
     lenB ++;
+//    Serial.print("lenB: ");
+//    Serial.print(lenB);
+//    Serial.print(" RMS Power: ");
+//    Serial.println(Prms);
     readMax = 0;
     lenA = 0;
   }
   else if(lenB >= 5)
   {
     // Calculate average Prms from buffB for the last second and store in buffC
-    PrmsAverage = PrmsTotal / 5;
-    Serial.print("PrmsAverage: ");
-    Serial.print(PrmsAverage);
-    Serial.print("    lenC: ");
-    Serial.println(lenC);
+    PrmsAverage = PrmsTotal / 5.0;
+//    Serial.print("PrmsAverage: ");
+//    Serial.print(PrmsAverage);
+//    Serial.print("    lenC: ");
+//    Serial.println(lenC);
     buffC[lenC] = PrmsAverage;
     PrmsTotal = 0;
     lenC ++;
     lenB = 0;
-  }
-  else if(lenC >= 1800)
-  {
-    // Calculate Usage and Peak every 30 min. Print to Serial and to Server
-    postDataFlag = true;
-    lenC = 0;
   }
   sensorValue = analogRead(analogPin);
   if(sensorValue > readMax) readMax = sensorValue;
@@ -97,12 +103,30 @@ void setup() {
 //  while (!Serial);
   setupWiFi();
   updateSystemDateTime(); // Requires a Connection
-//  postData(); // First Post
 
-  pinMode(7, OUTPUT);
-  digitalWrite(7, HIGH);
+  Serial.println();
+  Serial.println("######## INIT SD CARD ############################");
+  // see if the card is present and can be initialized:
+  if (!SD.begin(chipSelect)) {
+    Serial.println("Card failed, or not present");
+    while (1);
+  }
+  Serial.println("card initialized.");
+  if(!SD.exists("logs.txt")) // Add heading line
+  {
+    SDString = "dt,usage(kWh),peak(W)";
+    dataFile = SD.open("logs.txt", FILE_WRITE);
+    if (dataFile) {
+      dataFile.println(SDString);
+      dataFile.close();
+    } else Serial.println("error opening logs.txt"); 
+  }
+  Serial.println("##################################################");
+  Serial.println();
 
-  // Interval in millisecs
+  Serial.println();
+  Serial.println("######## START HARDWARE TIMER ####################");
+  // Interval in millisecs  
   if (ITimer.attachInterruptInterval_MS(HW_TIMER_INTERVAL_MS, TimerHandler))
   {
     Serial.print(F("Starting ITimer OK, millis() = ")); Serial.println(millis());
@@ -111,25 +135,38 @@ void setup() {
   {
     Serial.println(F("Can't set ITimer. Select another freq. or timer"));
   }
+  Serial.println("##################################################");
+  Serial.println();
   
   ISR_Timer.setInterval(TIMER_INTERVAL_1MS,  readCurrent);
+  lastLoopMin = minute();
 }
 
 void loop() {
-
-//  APIState.seconds_passed = now() - APIState.last_post_time;
-//  if(APIState.seconds_passed >= APIState.posting_interval)
-//  {
-//    postData();
-//    APIState.last_post_time = now();
-//  }
-
-  if(postDataFlag)
+  thisLoopMin = minute();
+  if(thisLoopMin % 30 == 0 && lastLoopMin % 30 != 0)
   {
     // Calculate Usage and Peak every 30 min. Print to Serial and to Server.
-    Serial.println("postDataFlag!");
-    postDataFlag = false;
+    APIState.peak = 0;
+    APIState.usage = 0;
+    float usage_accum = 0;
+    for(int i = 0; i < lenC; i++)
+    {
+      if(buffC[i] > APIState.peak) APIState.peak = buffC[i]; // W
+      usage_accum += buffC[i]*(1.0/3600.0); // Wh
+    }
+    lenC = 0;
+    APIState.usage = usage_accum; // Wh
+    postData();
+    SDString = getCurrentDateTimeString() + ',' + String(APIState.usage) + ',' + String(APIState.peak);
+    dataFile = SD.open("logs.txt", FILE_WRITE); 
+    // if the file is available, write to it:
+    if (dataFile) {
+      dataFile.println(SDString);
+      dataFile.close();
+    } else Serial.println("error opening logs.txt");
   }
+  lastLoopMin = thisLoopMin;
 }
 
 String getCurrentDateTimeString()
@@ -139,8 +176,7 @@ String getCurrentDateTimeString()
   uint8_t day_temp = day();
   uint8_t hour_temp = hour();
   uint8_t minute_temp = minute();
-  uint8_t second_temp = second();
-  uint8_t  buf[] = "xxxx-xx-xx xx:xx:xx";
+  uint8_t  buf[] = "xxxx-xx-xx xx:xx";
   buf[0] = ((year_temp/1000) % 10) + 48;
   buf[1] = ((year_temp/100) % 10) + 48;
   buf[2] = ((year_temp/10) % 10) + 48;
@@ -153,8 +189,6 @@ String getCurrentDateTimeString()
   buf[12] = (hour_temp % 10) + 48;
   buf[14] = ((minute_temp/10) % 10) + 48;
   buf[15] = (minute_temp % 10) + 48;
-  buf[17] = ((second_temp/10) % 10) + 48;
-  buf[18] = (second_temp % 10) + 48;
   return (char*)buf;
 }
 
