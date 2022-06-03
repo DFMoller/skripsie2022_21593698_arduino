@@ -15,6 +15,7 @@ SAMD_ISR_Timer ISR_Timer;
 #define TIMER_INTERVAL_1MS       1L
 const int chipSelect = 10;
 File dataFile;
+File stdoutFile;
 
 // Wifi Credentials
 char ssid[] = SECRET_SSID;        // your network SSID (name)
@@ -62,6 +63,16 @@ void TimerHandler(void)
   ISR_Timer.run();
 }
 
+void StandardOutput(String message)
+{
+  Serial.print(message);
+  stdoutFile = SD.open("stdout.txt", FILE_WRITE);
+  if (stdoutFile) {
+    stdoutFile.print(message);
+    stdoutFile.close();
+  } else Serial.println("error opening stdout.txt"); 
+}
+
 void readCurrent()
 {
   if(lenA >= 200)
@@ -100,43 +111,45 @@ void readCurrent()
 void setup() {
   Serial.begin(9600);
   delay(2000);
-//  while (!Serial);
-  setupWiFi();
-  updateSystemDateTime(); // Requires a Connection
 
-  Serial.println();
-  Serial.println("######## INIT SD CARD ############################");
+  Serial.print("\n######## INIT SD CARD ############################\n");
   // see if the card is present and can be initialized:
   if (!SD.begin(chipSelect)) {
-    Serial.println("Card failed, or not present");
+    StandardOutput("Card failed, or not present\n");
     while (1);
   }
-  Serial.println("card initialized.");
-  if(!SD.exists("logs.txt")) // Add heading line
+  stdoutFile = SD.open("stdout.txt", FILE_WRITE);
+  if (stdoutFile) {
+    stdoutFile.print("\n######## INIT SD CARD ############################\n");
+    stdoutFile.close();
+  } else Serial.println("error opening stdout.txt"); 
+  StandardOutput("card initialized.\n");
+  if(!SD.exists("datalogs.txt")) // Add heading line
   {
     SDString = "dt,usage(kWh),peak(W)";
-    dataFile = SD.open("logs.txt", FILE_WRITE);
+    dataFile = SD.open("datalogs.txt", FILE_WRITE);
     if (dataFile) {
       dataFile.println(SDString);
       dataFile.close();
-    } else Serial.println("error opening logs.txt"); 
+    } else StandardOutput("error opening logs.txt"); 
   }
-  Serial.println("##################################################");
-  Serial.println();
+  StandardOutput("##################################################\n\n");
 
-  Serial.println();
-  Serial.println("######## START HARDWARE TIMER ####################");
+  setupWiFi();
+  updateSystemDateTime(); // Requires a Connection
+
+  StandardOutput("\n######## START HARDWARE TIMER ####################\n");
   // Interval in millisecs  
   if (ITimer.attachInterruptInterval_MS(HW_TIMER_INTERVAL_MS, TimerHandler))
   {
-    Serial.print(F("Starting ITimer OK, millis() = ")); Serial.println(millis());
+    StandardOutput("Starting ITimer OK\n");
   }
   else
   {
-    Serial.println(F("Can't set ITimer. Select another freq. or timer"));
+    StandardOutput("Can't set ITimer. Select another freq. or timer\n");
+    while(1);
   }
-  Serial.println("##################################################");
-  Serial.println();
+  StandardOutput("##################################################\n\n");
   
   ISR_Timer.setInterval(TIMER_INTERVAL_1MS,  readCurrent);
   lastLoopMin = minute();
@@ -159,14 +172,18 @@ void loop() {
     APIState.usage = usage_accum; // Wh
     postData();
     SDString = getCurrentDateTimeString() + ',' + String(APIState.usage) + ',' + String(APIState.peak);
-    dataFile = SD.open("logs.txt", FILE_WRITE); 
+    dataFile = SD.open("datalogs.txt", FILE_WRITE); 
     // if the file is available, write to it:
     if (dataFile) {
       dataFile.println(SDString);
       dataFile.close();
-    } else Serial.println("error opening logs.txt");
+    } else StandardOutput("error opening logs.txt\n");
   }
   lastLoopMin = thisLoopMin;
+  if (timeStatus() == timeNeedsSync)
+  {
+    updateSystemDateTime();
+  }
 }
 
 String getCurrentDateTimeString()
@@ -194,9 +211,12 @@ String getCurrentDateTimeString()
 
 void postData()
 {
-  Serial.println("");
-  Serial.println("##### Posting Data to Flask ######################");
-  Serial.println("On " + getCurrentDateTimeString());
+  if (status != WL_CONNECTED)
+  {
+    setupWiFi();
+  }
+  StandardOutput("\n##### Posting Data to Flask ######################\n");
+  StandardOutput("On " + getCurrentDateTimeString() + "\n");
   APIState.datetime = getCurrentDateTimeString();
   StaticJsonDocument<256> usage_doc;
   StaticJsonDocument<256> peak_doc;
@@ -211,12 +231,13 @@ void postData()
 //  Serial.println();
 //  serializeJsonPretty(peak_doc, Serial);
 //  Serial.println();
+  StandardOutput("Sending Usage to /postUsage\n");
   postToEndpoint(client, "/postUsage", usage_doc);
   postToEndpoint(client, "/postPeak", peak_doc);
+  StandardOutput("Sending Peak to /postPeak\n");
   usage_doc.clear();
   peak_doc.clear();
-  Serial.println("##################################################");
-  Serial.println("");
+  StandardOutput("##################################################\n\n");
 }
 
 void postToEndpoint(WiFiClient client, String endpoint, const JsonDocument& doc)
@@ -233,48 +254,42 @@ void postToEndpoint(WiFiClient client, String endpoint, const JsonDocument& doc)
     client.println(); //Terminate headers with a blank line
     serializeJson(doc, client); // Send JSON document in body
   } else{
-    Serial.println("Unable to connect to PythonAnywhere Flask server!");
+      StandardOutput("Unable to connect to PythonAnywhere Flask server!\n");
   }
-  Serial.println("Response from Server:");
+  StandardOutput("Response from Server:\n");
   String line = "";
   while (client.connected()) { 
    line = client.readStringUntil('\n'); 
-   Serial.println(line); 
- } 
+   StandardOutput(line + "\n"); 
+  }
 }
 
 void setupWiFi()
 {
-  Serial.println("");
-  Serial.println("##### WiFi Setup #################################");
+  StandardOutput("\n##### WiFi Setup #################################\n");
   if (WiFi.status() == WL_NO_MODULE) {
-    Serial.println("Communication with WiFi module failed!");
-    // don't continue
+    StandardOutput("Communication with WiFi module failed!\n");
     while (true);
   }
   String fv = WiFi.firmwareVersion();
   if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
-    Serial.println("Please upgrade the firmware!");
+    StandardOutput("Please upgrade the firmware!\n");
   }
   while (status != WL_CONNECTED) {
-    Serial.print("Attempting to connect to WPA SSID: ");
-    Serial.println(ssid);
+    StandardOutput("Attempting to connect to WPA SSID: " + String(ssid) + "\n");
     status = WiFi.begin(ssid, pass); // Connect to WPA/WPA2 network:
     delay(5000);
   }
-  Serial.print("Connected to: ");
-  Serial.println(ssid);
-  Serial.println("##################################################");
-  Serial.println("");
+  StandardOutput("Connected to: " + String(ssid) + "\n");
+  StandardOutput("##################################################\n\n");
 }
 
 void updateSystemDateTime()
 {
-  Serial.println("");
-  Serial.println("##### Update Sys Time ############################");
-  Serial.println("Starting connection to worldtimeapi server..."); 
+  StandardOutput("\n##### Update Sys Time ############################\n");
+  StandardOutput("Starting connection to worldtimeapi server...\n"); 
   if (client.connect(dt_server, 80)) { 
-    Serial.println("Connected to worldtimeapi server."); 
+    StandardOutput("Connected to worldtimeapi server.\n"); 
     // Make a HTTP request: 
     client.println("GET /api/timezone/Africa/Johannesburg HTTP/1.1");
     client.println("Host: worldtimeapi.org");
@@ -284,11 +299,10 @@ void updateSystemDateTime()
     while (!client.available()) {
       delay(2000);
       secondsWaited += 2;
-      Serial.println("Waiting for data from worldtimeapi server...");
+      StandardOutput("Waiting for data from worldtimeapi server...\n");
       if (secondsWaited > 20) {
-        Serial.println("Time Out! Took too long to respond");
-        Serial.println("##################################################");
-        Serial.println("");
+        StandardOutput("Time Out! Took too long to respond\n");
+        StandardOutput("##################################################\n\n");
         return;
       }
     }
@@ -296,18 +310,15 @@ void updateSystemDateTime()
     char httpStatus[32] = {0};
     client.readBytesUntil('\r', httpStatus, sizeof(httpStatus));
     if(strcmp(httpStatus + 9, "200 OK") != 0){
-      Serial.print(F("Unexpected Response: "));
-      Serial.println(httpStatus + 9);
-      Serial.println("##################################################");
-      Serial.println("");
+      StandardOutput("Unexpected Response: " + String(httpStatus + 9) + "\n");
+      StandardOutput("##################################################\n\n");
       return;
     }
     //  Skip HTTP Headers
     char endOfHeaders[] = "\r\n\r\n";
     if(!client.find(endOfHeaders)){
-      Serial.println(F("Invalid Response"));
-      Serial.println("##################################################");
-      Serial.println("");
+      StandardOutput("Invalid Response\n");
+      StandardOutput("##################################################\n\n");
       return;
     }
     //  Create filter for parsing Json
@@ -317,15 +328,15 @@ void updateSystemDateTime()
     DeserializationError error;
     error = deserializeJson(doc, client, DeserializationOption::Filter(filter));
     if (error) {
-      Serial.print(F("deserializeJson() failed: "));
-      Serial.println(error.f_str());
-      Serial.println("##################################################");
-      Serial.println("");
+      StandardOutput("deserializeJson() failed: " + String(error.f_str()) + "\n");
+      StandardOutput("##################################################\n\n");
       return;
     }
-    Serial.println("WorldTimeApi UnixTime Response:");
+    StandardOutput("WorldTimeApi UnixTime Response:\n");
+    StandardOutput("**JSON only printed in serial monitor, but api\n  call has been successful.\n");
+    Serial.println();
     serializeJsonPretty(doc, Serial);
-    Serial.println("");
+    Serial.println();
     uint32_t unixtime = 0;
     unixtime = doc["unixtime"];
     unixtime += 120*60; // Plus two hours
@@ -334,10 +345,9 @@ void updateSystemDateTime()
     client.stop(); //  Disconnect
     filter.clear();
     doc.clear();
-    Serial.println("DT Set: " + getCurrentDateTimeString());
+    StandardOutput("DT Set: " + getCurrentDateTimeString() + "\n");
   } else { 
-    Serial.println("Unable to connect to WorldTimeApi server");
+    StandardOutput("Unable to connect to WorldTimeApi server\n");
   } 
-  Serial.println("##################################################");
-  Serial.println("");
+  StandardOutput("##################################################\n\n");
 }
