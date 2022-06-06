@@ -178,12 +178,10 @@ void loop() {
       dataFile.println(SDString);
       dataFile.close();
     } else StandardOutput("error opening logs.txt\n");
+    updateSystemDateTime();
+    thisLoopMin = minute();
   }
   lastLoopMin = thisLoopMin;
-  if (timeStatus() == timeNeedsSync)
-  {
-    updateSystemDateTime();
-  }
 }
 
 String getCurrentDateTimeString()
