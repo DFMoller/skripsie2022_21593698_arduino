@@ -2,4 +2,4 @@
 #define SECRET_SSID "Moller-wifi-EXT"
 //#define SECRET_PASS "yydw68766"
 #define SECRET_PASS "strongphoenix488"
-#define API_KEY "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6MiwiZW1haWwiOiJkZm1vbGxlckBnbWFpbC5jb20ifQ.xndFJxOtsZ4Alsj5r-I59cfxetvWCM3DhfBv2fHmRE4"
+#define API_KEY "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6MSwiZW1haWwiOiIyMTU5MzY5OEBzdW4uYWMuemEifQ.qMxJfoMiNTEEHGEmHkfwQmlOoulQIuI_xuu6cr4p07E"

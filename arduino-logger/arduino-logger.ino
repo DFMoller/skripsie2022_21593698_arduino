@@ -120,7 +120,7 @@ void setup() {
   }
   stdoutFile = SD.open("stdout.txt", FILE_WRITE);
   if (stdoutFile) {
-    stdoutFile.print("\n######## INIT SD CARD ############################\n");
+    stdoutFile.print("\n######## INIT SD CARD ############################ - New Power Cycle\n");
     stdoutFile.close();
   } else Serial.println("error opening stdout.txt"); 
   StandardOutput("card initialized.\n");
@@ -216,25 +216,19 @@ void postData()
   StandardOutput("\n##### Posting Data to Flask ######################\n");
   StandardOutput("On " + getCurrentDateTimeString() + "\n");
   APIState.datetime = getCurrentDateTimeString();
-  StaticJsonDocument<256> usage_doc;
-  StaticJsonDocument<256> peak_doc;
-  usage_doc["datetime"] = APIState.datetime;
-  usage_doc["api_key"] = API_KEY;
-  usage_doc["usage"] = APIState.usage;
-  peak_doc["datetime"] = APIState.datetime;
-  peak_doc["api_key"] = API_KEY;
-  peak_doc["peak"] = APIState.peak;
+  StaticJsonDocument<256> data_doc;
+  data_doc["datetime"] = APIState.datetime;
+  data_doc["api_key"] = API_KEY;
+  data_doc["usage"] = APIState.usage;
+  data_doc["peak"] = APIState.peak;
 //  Serial.println("JSON Objects to be sent via POST request:");
 //  serializeJsonPretty(usage_doc, Serial);
 //  Serial.println();
 //  serializeJsonPretty(peak_doc, Serial);
 //  Serial.println();
-  StandardOutput("Sending Usage to /postUsage\n");
-  postToEndpoint(client, "/postUsage", usage_doc);
-  postToEndpoint(client, "/postPeak", peak_doc);
-  StandardOutput("Sending Peak to /postPeak\n");
-  usage_doc.clear();
-  peak_doc.clear();
+  StandardOutput("Sending Data to /postData\n");
+  postToEndpoint(client, "/postData", data_doc);
+  data_doc.clear();
   StandardOutput("##################################################\n\n");
 }
 
