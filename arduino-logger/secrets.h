@@ -1,5 +1,0 @@
-//#define SECRET_SSID "WR7010-2.4G-209"
-#define SECRET_SSID "Moller-wifi-EXT"
-//#define SECRET_PASS "yydw68766"
-#define SECRET_PASS "strongphoenix488"
-#define API_KEY "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6MSwiZW1haWwiOiIyMTU5MzY5OEBzdW4uYWMuemEifQ.qMxJfoMiNTEEHGEmHkfwQmlOoulQIuI_xuu6cr4p07E"
