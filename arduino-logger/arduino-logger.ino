@@ -40,6 +40,8 @@ uint8_t lastLoopMin = 0;
 uint8_t thisLoopMin = 0;
 int millivolts = 0;
 String SDString = "";
+bool retry_post = false;
+bool retry_updateTime = false;
 
 // API Credentialss
 char server[] = "21593698.pythonanywhere.com";
@@ -181,6 +183,21 @@ void loop() {
     updateSystemDateTime();
     thisLoopMin = minute();
   }
+  if(retry_post || retry_updateTime)
+  {
+    StandardOutput("Trying to re-establish a WiFi connection on " + getCurrentDateTimeString() + "...\n");
+    setupWiFi();
+  }
+  if(retry_post)
+  {
+    StandardOutput("Trying to re-post data to the server on " + getCurrentDateTimeString() + "...\n");
+    postData();
+  }
+  if(retry_updateTime)
+  {
+    StandardOutput("Trying to re-connect to WorldTimeAPI on " + getCurrentDateTimeString() + "...\n");
+    updateSystemDateTime();
+  }
   lastLoopMin = thisLoopMin;
 }
 
@@ -209,10 +226,6 @@ String getCurrentDateTimeString()
 
 void postData()
 {
-  if (status != WL_CONNECTED)
-  {
-    setupWiFi();
-  }
   StandardOutput("\n##### Posting Data to Flask ######################\n");
   StandardOutput("On " + getCurrentDateTimeString() + "\n");
   APIState.datetime = getCurrentDateTimeString();
@@ -227,12 +240,14 @@ void postData()
 //  serializeJsonPretty(peak_doc, Serial);
 //  Serial.println();
   StandardOutput("Sending Data to /postData\n");
-  postToEndpoint(client, "/postData", data_doc);
+  int res = postToEndpoint(client, "/postData", data_doc);
   data_doc.clear();
   StandardOutput("##################################################\n\n");
+  if(res == 0) retry_post = true;
+  else retry_post = false;
 }
 
-void postToEndpoint(WiFiClient client, String endpoint, const JsonDocument& doc)
+int postToEndpoint(WiFiClient client, String endpoint, const JsonDocument& doc)
 {
   if (client.connect(server, 80)){
     client.print("POST ");
@@ -247,6 +262,7 @@ void postToEndpoint(WiFiClient client, String endpoint, const JsonDocument& doc)
     serializeJson(doc, client); // Send JSON document in body
   } else{
       StandardOutput("Unable to connect to PythonAnywhere Flask server!\n");
+      return 0;
   }
   StandardOutput("Response from Server:\n");
   String line = "";
@@ -254,6 +270,7 @@ void postToEndpoint(WiFiClient client, String endpoint, const JsonDocument& doc)
    line = client.readStringUntil('\n'); 
    StandardOutput(line + "\n"); 
   }
+  return 1;
 }
 
 void setupWiFi()
@@ -338,8 +355,10 @@ void updateSystemDateTime()
     filter.clear();
     doc.clear();
     StandardOutput("DT Set: " + getCurrentDateTimeString() + "\n");
+    retry_updateTime = false;
   } else { 
     StandardOutput("Unable to connect to WorldTimeApi server\n");
+    retry_updateTime = true;
   } 
   StandardOutput("##################################################\n\n");
 }
