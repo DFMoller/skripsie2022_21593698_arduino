@@ -14,8 +14,9 @@ SAMD_ISR_Timer ISR_Timer;
 #define HW_TIMER_INTERVAL_MS      1
 #define TIMER_INTERVAL_1MS       1L
 const int chipSelect = 10;
-File dataFile;
+File sentDataFile;
 File stdoutFile;
+File backlogFile;
 
 // Wifi Credentials
 char ssid[] = SECRET_SSID;        // your network SSID (name)
@@ -42,6 +43,7 @@ int millivolts = 0;
 String SDString = "";
 bool retry_post = false;
 bool retry_updateTime = false;
+uint32_t num_failures = 0;
 
 // API Credentialss
 char server[] = "21593698.pythonanywhere.com";
@@ -126,14 +128,23 @@ void setup() {
     stdoutFile.close();
   } else Serial.println("error opening stdout.txt"); 
   StandardOutput("card initialized.\n");
-  if(!SD.exists("datalogs.txt")) // Add heading line
+  if(!SD.exists("log.txt")) // Add heading line
   {
     SDString = "dt,usage(kWh),peak(W)";
-    dataFile = SD.open("datalogs.txt", FILE_WRITE);
-    if (dataFile) {
-      dataFile.println(SDString);
-      dataFile.close();
-    } else StandardOutput("error opening logs.txt"); 
+    sentDataFile = SD.open("log.txt", FILE_WRITE);
+    if (sentDataFile) {
+      sentDataFile.println(SDString);
+      sentDataFile.close();
+    } else StandardOutput("error opening log.txt"); 
+  }
+  if(!SD.exists("backlog.txt")) // Add heading line
+  {
+    SDString = "dt,usage(kWh),peak(W)";
+    backlogFile = SD.open("backlog.txt", FILE_WRITE);
+    if (backlogFile) {
+      backlogFile.println(SDString);
+      backlogFile.close();
+    } else StandardOutput("error opening backlog.txt"); 
   }
   StandardOutput("##################################################\n\n");
 
@@ -161,44 +172,57 @@ void loop() {
   thisLoopMin = minute();
   if(thisLoopMin % 30 == 0 && lastLoopMin % 30 != 0)
   {
-    // Calculate Usage and Peak every 30 min. Print to Serial and to Server.
-    APIState.peak = 0;
-    APIState.usage = 0;
-    float usage_accum = 0;
-    for(int i = 0; i < lenC; i++)
-    {
-      if(buffC[i] > APIState.peak) APIState.peak = buffC[i]; // W
-      usage_accum += buffC[i]*(1.0/3600.0); // Wh
-    }
-    lenC = 0;
-    APIState.usage = usage_accum; // Wh
-    postData();
-    SDString = getCurrentDateTimeString() + ',' + String(APIState.usage) + ',' + String(APIState.peak);
-    dataFile = SD.open("datalogs.txt", FILE_WRITE); 
-    // if the file is available, write to it:
-    if (dataFile) {
-      dataFile.println(SDString);
-      dataFile.close();
-    } else StandardOutput("error opening logs.txt\n");
+    preparePostData();
+    postData(true);
+    postBacklog();
     updateSystemDateTime();
     thisLoopMin = minute();
   }
-  if(retry_post || retry_updateTime)
-  {
-    StandardOutput("Trying to re-establish a WiFi connection on " + getCurrentDateTimeString() + "...\n");
-    setupWiFi();
-  }
-  if(retry_post)
-  {
-    StandardOutput("Trying to re-post data to the server on " + getCurrentDateTimeString() + "...\n");
-    postData();
-  }
-  if(retry_updateTime)
-  {
-    StandardOutput("Trying to re-connect to WorldTimeAPI on " + getCurrentDateTimeString() + "...\n");
-    updateSystemDateTime();
-  }
+  maintainWiFi();
   lastLoopMin = thisLoopMin;
+}
+
+void postBacklog()
+{
+  if(SD.exists("backlog.txt"))
+  {
+    backlogFile = SD.open("backlog.txt", FILE_READ);
+    if (backlogFile)
+    {
+      String line = "";
+      uint8_t backlogCount = 0;
+      int res;
+      int successfulWrites = 0;
+      while(backlogFile.available())
+      {
+        line = backlogFile.read();
+        APIState.usage = line.substring(17, 22).toInt();
+        APIState.peak = line.substring(23).toInt();
+        APIState.datetime = getCurrentDateTimeString();
+        res = postData(false);
+        if (res == 1) successfulWrites ++;
+        backlogCount ++;
+      }
+      if (backlogCount == successfulWrites && SD.exists("backlog.txt")) SD.remove("backlog.txt");
+    }
+    StandardOutput("##################################################\n\n");
+  }
+}
+
+void preparePostData()
+{
+  // Calculate Usage and Peak every 30 min. Print to Serial and to Server.
+  APIState.peak = 0;
+  APIState.usage = 0;
+  APIState.datetime = getCurrentDateTimeString();
+  float usage_accum = 0;
+  for(int i = 0; i < lenC; i++)
+  {
+    if(buffC[i] > APIState.peak) APIState.peak = buffC[i]; // W
+    usage_accum += buffC[i]*(1.0/3600.0); // Wh
+  }
+  lenC = 0;
+  APIState.usage = usage_accum; // Wh
 }
 
 String getCurrentDateTimeString()
@@ -224,11 +248,11 @@ String getCurrentDateTimeString()
   return (char*)buf;
 }
 
-void postData()
+int postData(bool first)
 {
-  StandardOutput("\n##### Posting Data to Flask ######################\n");
-  StandardOutput("On " + getCurrentDateTimeString() + "\n");
-  APIState.datetime = getCurrentDateTimeString();
+  if (first) StandardOutput("\n##### Posting Data to Flask ######################\n");
+  else StandardOutput("\n##### Posting BACKLOG Data to Flask ##############\n");
+  StandardOutput("For " + APIState.datetime + "\n");
   StaticJsonDocument<256> data_doc;
   data_doc["datetime"] = APIState.datetime;
   data_doc["api_key"] = API_KEY;
@@ -242,9 +266,52 @@ void postData()
   StandardOutput("Sending Data to /postData\n");
   int res = postToEndpoint(client, "/postData", data_doc);
   data_doc.clear();
+  if(res == 0 && first){
+    if (first) {
+//      SDString = APIState.datetime + ',' + String(APIState.usage) + ',' + String(APIState.peak);
+      SDString = APIState.datetime + ',' + "xxxxx" + ',' + "xxxxx";
+      SDString[17] = ((APIState.usage/10000) % 10) + 48;
+      SDString[18] = ((APIState.usage/1000) % 10) + 48;
+      SDString[19] = ((APIState.usage/100) % 10) + 48;
+      SDString[20] = ((APIState.usage/10) % 10) + 48;
+      SDString[21] = ((APIState.usage/1) % 10) + 48;
+      SDString[23] = ((APIState.peak/10000) % 10) + 48;
+      SDString[24] = ((APIState.peak/1000) % 10) + 48;
+      SDString[25] = ((APIState.peak/100) % 10) + 48;
+      SDString[26] = ((APIState.peak/10) % 10) + 48;
+      SDString[27] = ((APIState.peak/1) % 10) + 48;
+      backlogFile = SD.open("backlog.txt", FILE_WRITE); 
+      // if the file is available, write to it:
+      if (backlogFile) {
+        backlogFile.println(SDString);
+        backlogFile.close();
+      } else StandardOutput("error opening backlog.txt\n");
+    }
+    return 0;
+  }
+  else{
+    StandardOutput("Successful write to server.\n");
+//    SDString = APIState.datetime + ',' + String(APIState.usage) + ',' + String(APIState.peak);
+    SDString = APIState.datetime + ',' + "xxxxx" + ',' + "xxxxx";
+    SDString[17] = ((APIState.usage/10000) % 10) + 48;
+    SDString[18] = ((APIState.usage/1000) % 10) + 48;
+    SDString[19] = ((APIState.usage/100) % 10) + 48;
+    SDString[20] = ((APIState.usage/10) % 10) + 48;
+    SDString[21] = ((APIState.usage/1) % 10) + 48;
+    SDString[23] = ((APIState.peak/10000) % 10) + 48;
+    SDString[24] = ((APIState.peak/1000) % 10) + 48;
+    SDString[25] = ((APIState.peak/100) % 10) + 48;
+    SDString[26] = ((APIState.peak/10) % 10) + 48;
+    SDString[27] = ((APIState.peak/1) % 10) + 48;
+    sentDataFile = SD.open("log.txt", FILE_WRITE); 
+    // if the file is available, write to it:
+    if (sentDataFile) {
+      sentDataFile.println(SDString);
+      sentDataFile.close();
+    } else StandardOutput("error opening log.txt\n");
+  }
   StandardOutput("##################################################\n\n");
-  if(res == 0) retry_post = true;
-  else retry_post = false;
+  return 1;
 }
 
 int postToEndpoint(WiFiClient client, String endpoint, const JsonDocument& doc)
@@ -284,13 +351,31 @@ void setupWiFi()
   if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
     StandardOutput("Please upgrade the firmware!\n");
   }
-  while (status != WL_CONNECTED) {
+  
+  while (WiFi.status() != WL_CONNECTED) {
     StandardOutput("Attempting to connect to WPA SSID: " + String(ssid) + "\n");
-    status = WiFi.begin(ssid, pass); // Connect to WPA/WPA2 network:
+    WiFi.begin(ssid, pass); // Connect to WPA/WPA2 network:
     delay(5000);
   }
   StandardOutput("Connected to: " + String(ssid) + "\n");
   StandardOutput("##################################################\n\n");
+}
+
+void maintainWiFi() {
+  if(WiFi.status() != WL_CONNECTED) {
+    StandardOutput("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n");
+    StandardOutput("Trying to re-establish a WiFi connection on " + getCurrentDateTimeString() + "...\n");
+    WiFi.end();
+    WiFi.begin(ssid, pass);
+    StandardOutput("Waiting 5 seconds...\n");
+    delay(5000);
+    if(WiFi.status() == WL_CONNECTED){
+      StandardOutput("Connected to: " + String(ssid) + "\n");
+    } else {
+      StandardOutput("Still not connected.\n");
+    }
+    StandardOutput("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n\n");
+  }
 }
 
 void updateSystemDateTime()
