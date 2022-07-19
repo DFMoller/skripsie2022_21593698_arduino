@@ -1,13 +1,12 @@
+#include "secrets.h"
 #include <SPI.h>
 #include <WiFiNINA.h>
-#include "secrets.h"
 #include <ArduinoJson.h>
 #include <TimeLib.h>
 #include "SAMDTimerInterrupt.h"
 #include "SAMD_ISR_Timer.h"
 #include <SD.h>
-
-
+#include <BlynkSimpleWiFiNINA.h>
 
 SAMDTimer ITimer(TIMER_TC3);
 SAMD_ISR_Timer ISR_Timer;
@@ -17,10 +16,12 @@ const int chipSelect = 10;
 File sentDataFile;
 File stdoutFile;
 File backlogFile;
+BlynkTimer timer;
 
 // Wifi Credentials
 char ssid[] = SECRET_SSID;        // your network SSID (name)
 char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
+char auth[] = BLYNK_AUTH_TOKEN;
 int status = WL_IDLE_STATUS;     // the WiFi radio's status
 int analogPin = A7;
 uint16_t sensorValue = 0;
@@ -44,6 +45,7 @@ String SDString = "";
 bool retry_post = false;
 bool retry_updateTime = false;
 uint32_t num_failures = 0;
+bool posted = false;
 
 // API Credentialss
 char server[] = "21593698.pythonanywhere.com";
@@ -74,7 +76,7 @@ void StandardOutput(String message)
   if (stdoutFile) {
     stdoutFile.print(message);
     stdoutFile.close();
-  } else Serial.println("error opening stdout.txt"); 
+  } else Serial.println("error opening stdout.txt");
 }
 
 void readCurrent()
@@ -87,10 +89,6 @@ void readCurrent()
     Prms = (millivolts/33.0) * 2/sqrt(2) * 230; // Prms
     PrmsTotal += Prms;
     lenB ++;
-//    Serial.print("lenB: ");
-//    Serial.print(lenB);
-//    Serial.print(" RMS Power: ");
-//    Serial.println(Prms);
     readMax = 0;
     lenA = 0;
   }
@@ -98,10 +96,6 @@ void readCurrent()
   {
     // Calculate average Prms from buffB for the last second and store in buffC
     PrmsAverage = PrmsTotal / 5.0;
-//    Serial.print("PrmsAverage: ");
-//    Serial.print(PrmsAverage);
-//    Serial.print("    lenC: ");
-//    Serial.println(lenC);
     buffC[lenC] = PrmsAverage;
     PrmsTotal = 0;
     lenC ++;
@@ -112,9 +106,21 @@ void readCurrent()
   lenA ++;
 }
 
+void myTimerEvent()
+{
+  // You can send any value at any time.
+  // Please don't send more that 10 values per second.
+  Blynk.virtualWrite(V2, millis() / 1000);
+  Blynk.virtualWrite(V5, PrmsAverage);
+}
+
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   delay(2000);
+
+  Blynk.begin(auth, ssid, pass);
+  timer.setInterval(1000L, myTimerEvent);
+  Blynk.virtualWrite(V6, 0);
 
   Serial.print("\n######## INIT SD CARD ############################\n");
   // see if the card is present and can be initialized:
@@ -137,22 +143,13 @@ void setup() {
       sentDataFile.close();
     } else StandardOutput("error opening log.txt"); 
   }
-  if(!SD.exists("backlog.txt")) // Add heading line
-  {
-    SDString = "dt,usage(kWh),peak(W)";
-    backlogFile = SD.open("backlog.txt", FILE_WRITE);
-    if (backlogFile) {
-      backlogFile.println(SDString);
-      backlogFile.close();
-    } else StandardOutput("error opening backlog.txt"); 
-  }
   StandardOutput("##################################################\n\n");
 
   setupWiFi();
   updateSystemDateTime(); // Requires a Connection
 
   StandardOutput("\n######## START HARDWARE TIMER ####################\n");
-  // Interval in millisecs  
+  // Interval in millisecs
   if (ITimer.attachInterruptInterval_MS(HW_TIMER_INTERVAL_MS, TimerHandler))
   {
     StandardOutput("Starting ITimer OK\n");
@@ -170,16 +167,18 @@ void setup() {
 
 void loop() {
   thisLoopMin = minute();
-  if(thisLoopMin % 30 == 0 && lastLoopMin % 30 != 0)
+  if(thisLoopMin % 30 == 0 && !posted)
   {
     preparePostData();
     postData(true);
     postBacklog();
     updateSystemDateTime();
-    thisLoopMin = minute();
-  }
+    posted = true;
+  } else if (thisLoopMin % 30 != 0 && posted) posted = false;
   maintainWiFi();
-  lastLoopMin = thisLoopMin;
+  Blynk.run();
+  timer.run();
+//  lastLoopMin = thisLoopMin;
 }
 
 void postBacklog()
@@ -193,17 +192,32 @@ void postBacklog()
       uint8_t backlogCount = 0;
       int res;
       int successfulWrites = 0;
+      char c;
+      StandardOutput("\n################## BACKLOG #######################\n");
+      uint8_t ln_num = 1;
       while(backlogFile.available())
       {
-        line = backlogFile.read();
-        APIState.usage = line.substring(17, 22).toInt();
-        APIState.peak = line.substring(23).toInt();
-        APIState.datetime = getCurrentDateTimeString();
-        res = postData(false);
-        if (res == 1) successfulWrites ++;
-        backlogCount ++;
+        line = backlogFile.readStringUntil('\n');
+        if (ln_num > 1)
+        {
+          APIState.usage = line.substring(17, 22).toInt();
+          APIState.peak = line.substring(23).toInt();
+          APIState.datetime = line.substring(0, 16);
+          StandardOutput("Line " + String(ln_num) + ": ");
+          StandardOutput("DT: " + String(APIState.datetime) + " || ");
+          StandardOutput("Usage: " + String(APIState.usage) + " || ");
+          StandardOutput("Peak: " + String(APIState.peak) + "\n");
+          res = postData(false);
+          if (res == 1) successfulWrites ++;
+          backlogCount ++;
+        }
+        ln_num ++;
       }
-      if (backlogCount == successfulWrites && SD.exists("backlog.txt")) SD.remove("backlog.txt");
+      backlogFile.close();
+      if (backlogCount == successfulWrites && SD.exists("backlog.txt")) {
+        SD.remove("backlog.txt");
+        StandardOutput("backlog.txt deleted\n");
+      }
     }
     StandardOutput("##################################################\n\n");
   }
@@ -251,7 +265,6 @@ String getCurrentDateTimeString()
 int postData(bool first)
 {
   if (first) StandardOutput("\n##### Posting Data to Flask ######################\n");
-  else StandardOutput("\n##### Posting BACKLOG Data to Flask ##############\n");
   StandardOutput("For " + APIState.datetime + "\n");
   StaticJsonDocument<256> data_doc;
   data_doc["datetime"] = APIState.datetime;
@@ -266,8 +279,17 @@ int postData(bool first)
   StandardOutput("Sending Data to /postData\n");
   int res = postToEndpoint(client, "/postData", data_doc);
   data_doc.clear();
-  if(res == 0 && first){
+  if(res == 0){
     if (first) {
+      if(!SD.exists("backlog.txt")) // Add heading line
+      {
+        SDString = "dt,usage(kWh),peak(W)";
+        backlogFile = SD.open("backlog.txt", FILE_WRITE);
+        if (backlogFile) {
+          backlogFile.println(SDString);
+          backlogFile.close();
+        } else StandardOutput("error opening backlog.txt");
+      }
 //      SDString = APIState.datetime + ',' + String(APIState.usage) + ',' + String(APIState.peak);
       SDString = APIState.datetime + ',' + "xxxxx" + ',' + "xxxxx";
       SDString[17] = ((APIState.usage/10000) % 10) + 48;
@@ -287,6 +309,7 @@ int postData(bool first)
         backlogFile.close();
       } else StandardOutput("error opening backlog.txt\n");
     }
+    StandardOutput("##################################################\n\n");
     return 0;
   }
   else{
@@ -310,7 +333,7 @@ int postData(bool first)
       sentDataFile.close();
     } else StandardOutput("error opening log.txt\n");
   }
-  StandardOutput("##################################################\n\n");
+  if (first) StandardOutput("##################################################\n\n");
   return 1;
 }
 
@@ -358,11 +381,13 @@ void setupWiFi()
     delay(5000);
   }
   StandardOutput("Connected to: " + String(ssid) + "\n");
+  Blynk.virtualWrite(V6, 1);
   StandardOutput("##################################################\n\n");
 }
 
 void maintainWiFi() {
   if(WiFi.status() != WL_CONNECTED) {
+    Blynk.virtualWrite(V6, 0);
     StandardOutput("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n");
     StandardOutput("Trying to re-establish a WiFi connection on " + getCurrentDateTimeString() + "...\n");
     WiFi.end();
@@ -371,6 +396,7 @@ void maintainWiFi() {
     delay(5000);
     if(WiFi.status() == WL_CONNECTED){
       StandardOutput("Connected to: " + String(ssid) + "\n");
+      Blynk.virtualWrite(V6, 1);
     } else {
       StandardOutput("Still not connected.\n");
     }
